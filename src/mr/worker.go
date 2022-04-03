@@ -1,10 +1,15 @@
 package mr
 
-import "fmt"
-import "log"
-import "net/rpc"
-import "hash/fnv"
-
+import (
+	"encoding/json"
+	"fmt"
+	"hash/fnv"
+	"io/ioutil"
+	"log"
+	"net/rpc"
+	"os"
+	"time"
+)
 
 //
 // Map functions return a slice of KeyValue.
@@ -24,15 +29,67 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
+func readFile(filename string) string {
+	file, err := os.Open(filename)
+	if err != nil {
+		log.Fatalf("cannot open %v", filename)
+	}
+	content, err := ioutil.ReadAll(file)
+	if err != nil {
+		log.Fatalf("cannot read %v", filename)
+	}
+	file.Close()
+	return string(content)
+}
+
+func writeIntermidiateFile(kva []KeyValue, nMap int, nReduce int) {
+	var regions = make([][]KeyValue, nReduce)
+	for _, kv := range kva {
+		regionIndex := ihash(kv.Key) % nReduce
+		regions[regionIndex] = append(regions[regionIndex], kv)
+	}
+	for i, region := range regions {
+		oname := fmt.Sprint("mr-", nMap, "-", i)
+		jsonRegion, _ := json.Marshal(region)
+		err := ioutil.WriteFile(oname, jsonRegion, 0644)
+		if err != nil {
+			fmt.Println(err)
+		}
+	}
+}
 
 //
 // main/mrworker.go calls this function.
 //
-func Worker(mapf func(string, string) []KeyValue,
-	reducef func(string, []string) string) {
-
+func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string) string) {
 	// Your worker implementation here.
+	// 1. Request for task every 50ms
+	for {
+		requestForTaskReply := new(RequestForTaskReply)
+		ok := call("Coordinator.RequestForTaskHandler", struct{}{}, &requestForTaskReply)
+		if ok {
+			// 2. Perform task
+			if requestForTaskReply.Files != nil {
+				jsonReply, _ := json.Marshal(requestForTaskReply)
+				fmt.Println(string(jsonReply))
+				println(requestForTaskReply == nil)
 
+				switch requestForTaskReply.Type {
+				case Map:
+					contents := readFile(requestForTaskReply.Files[0])
+					kva := mapf(requestForTaskReply.Files[0], contents)
+					writeIntermidiateFile(kva, requestForTaskReply.Id, requestForTaskReply.Region)
+				}
+			} else {
+				println("No task assigned but job not done, keep requesting")
+			}
+		} else {
+			// 3. No task assigned, terminate
+			println("Terminate because master replies error")
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
 
