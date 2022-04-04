@@ -88,29 +88,35 @@ func (c *Coordinator) FinishTaskHandler(args *FinishTaskArgs, reply *struct{}) e
 	defer c.mu.Unlock()
 	switch args.Type {
 	case Map:
-		c.MapTasks[args.Id].Finished = true
-		for _, mapTask := range c.MapTasks {
-			if !mapTask.Finished {
-				return nil
+		// Ignore already completed tasks
+		if !c.MapTasks[args.Id].Finished {
+			c.MapTasks[args.Id].Finished = true
+			for _, mapTask := range c.MapTasks {
+				if !mapTask.Finished {
+					return nil
+				}
 			}
-		}
-		c.MapTasksFinished = true
-		for i := 0; i < c.Region; i++ {
-			files := []string{}
-			for j := 0; j < len(c.MapTasks); j++ {
-				filename := fmt.Sprint("mr-", j, "-", i)
-				files = append(files, filename)
+			c.MapTasksFinished = true
+			for i := 0; i < c.Region; i++ {
+				files := []string{}
+				for j := 0; j < len(c.MapTasks); j++ {
+					filename := fmt.Sprint("mr-", j, "-", i)
+					files = append(files, filename)
+				}
+				c.ReduceTasks = append(c.ReduceTasks, ReduceTask{files, false, false})
 			}
-			c.ReduceTasks = append(c.ReduceTasks, ReduceTask{files, false, false})
 		}
 	case Reduce:
-		c.ReduceTasks[args.Id].Finished = true
-		for _, reduceTask := range c.ReduceTasks {
-			if !reduceTask.Finished {
-				return nil
+		// Ignore already completed tasks
+		if !c.ReduceTasks[args.Id].Finished {
+			c.ReduceTasks[args.Id].Finished = true
+			for _, reduceTask := range c.ReduceTasks {
+				if !reduceTask.Finished {
+					return nil
+				}
 			}
+			c.ReduceTasksFinished = true
 		}
-		c.ReduceTasksFinished = true
 	}
 	return nil
 }
