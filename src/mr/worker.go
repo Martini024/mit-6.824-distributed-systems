@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/rpc"
 	"os"
+	"sort"
 	"time"
 )
 
@@ -18,6 +19,14 @@ type KeyValue struct {
 	Key   string
 	Value string
 }
+
+// for sorting by key.
+type ByKey []KeyValue
+
+// for sorting by key.
+func (a ByKey) Len() int           { return len(a) }
+func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
 //
 // use ihash(key) % NReduce to choose the reduce
@@ -42,7 +51,7 @@ func readFile(filename string) string {
 	return string(content)
 }
 
-func writeIntermidiateFile(kva []KeyValue, nMap int, nReduce int) {
+func writeIntermediateFiles(kva []KeyValue, nMap int, nReduce int) {
 	var regions = make([][]KeyValue, nReduce)
 	for _, kv := range kva {
 		regionIndex := ihash(kv.Key) % nReduce
@@ -58,6 +67,51 @@ func writeIntermidiateFile(kva []KeyValue, nMap int, nReduce int) {
 	}
 }
 
+func readIntermediateFiles(filenames []string) []KeyValue {
+	intermediateKva := []KeyValue{}
+	kva := []KeyValue{}
+	for _, filename := range filenames {
+		file, err := os.Open(filename)
+		if err != nil {
+			log.Fatalf("cannot open %v", filename)
+		}
+		content, err := ioutil.ReadAll(file)
+		if err != nil {
+			log.Fatalf("cannot read %v", filename)
+		}
+		file.Close()
+		json.Unmarshal(content, &intermediateKva)
+		kva = append(kva, intermediateKva...)
+	}
+	return kva
+}
+
+func writeOutputToFiles(kva []KeyValue, reducef func(string, []string) string, nReduce int) {
+	sort.Sort(ByKey(kva))
+
+	oname := fmt.Sprint("mr-out-", nReduce)
+	ofile, _ := os.Create(oname)
+
+	i := 0
+	for i < len(kva) {
+		j := i + 1
+		for j < len(kva) && kva[j].Key == kva[i].Key {
+			j++
+		}
+		values := []string{}
+		for k := i; k < j; k++ {
+			values = append(values, kva[k].Value)
+		}
+		count := reducef(kva[i].Key, values)
+
+		fmt.Fprintf(ofile, "%v %v\n", kva[i].Key, count)
+
+		i = j
+	}
+
+	ofile.Close()
+}
+
 //
 // main/mrworker.go calls this function.
 //
@@ -66,29 +120,38 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 	// 1. Request for task every 50ms
 	for {
 		requestForTaskReply := new(RequestForTaskReply)
-		ok := call("Coordinator.RequestForTaskHandler", struct{}{}, &requestForTaskReply)
+		ok := call("Coordinator.RequestForTaskHandler", &struct{}{}, &requestForTaskReply)
 		if ok {
 			// 2. Perform task
 			if requestForTaskReply.Files != nil {
-				jsonReply, _ := json.Marshal(requestForTaskReply)
-				fmt.Println(string(jsonReply))
-				println(requestForTaskReply == nil)
+				// jsonReply, _ := json.Marshal(requestForTaskReply)
+				// fmt.Println(string(jsonReply))
 
 				switch requestForTaskReply.Type {
 				case Map:
 					contents := readFile(requestForTaskReply.Files[0])
 					kva := mapf(requestForTaskReply.Files[0], contents)
-					writeIntermidiateFile(kva, requestForTaskReply.Id, requestForTaskReply.Region)
+					writeIntermediateFiles(kva, requestForTaskReply.Id, requestForTaskReply.Region)
+					// 3. Finish task
+					args := FinishTaskArgs{requestForTaskReply.Id, Map}
+					call("Coordinator.FinishTaskHandler", &args, &struct{}{})
+				case Reduce:
+					kva := readIntermediateFiles(requestForTaskReply.Files)
+					writeOutputToFiles(kva, reducef, requestForTaskReply.Id)
+
+					args := FinishTaskArgs{requestForTaskReply.Id, Reduce}
+					call("Coordinator.FinishTaskHandler", &args, &struct{}{})
 				}
-			} else {
-				println("No task assigned but job not done, keep requesting")
 			}
+			// else {
+			// 	println("No task assigned but job not done, keep requesting")
+			// }
 		} else {
 			// 3. No task assigned, terminate
 			println("Terminate because master replies error")
 			break
 		}
-		time.Sleep(1 * time.Second)
+		time.Sleep(100 * time.Millisecond)
 	}
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()

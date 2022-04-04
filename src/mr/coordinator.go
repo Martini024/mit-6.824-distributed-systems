@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"fmt"
 	"log"
 	"net"
 	"net/http"
@@ -65,6 +66,38 @@ func (c *Coordinator) RequestForTaskHandler(args *struct{}, reply *RequestForTas
 	return nil
 }
 
+func (c *Coordinator) FinishTaskHandler(args *FinishTaskArgs, reply *struct{}) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	switch args.Type {
+	case Map:
+		c.MapTasks[args.Id].Finished = true
+		for _, mapTask := range c.MapTasks {
+			if !mapTask.Finished {
+				return nil
+			}
+		}
+		c.MapTasksFinished = true
+		for i := 0; i < c.Region; i++ {
+			files := []string{}
+			for j := 0; j < len(c.MapTasks); j++ {
+				filename := fmt.Sprint("mr-", j, "-", i)
+				files = append(files, filename)
+			}
+			c.ReduceTasks = append(c.ReduceTasks, ReduceTask{files, false, false})
+		}
+	case Reduce:
+		c.ReduceTasks[args.Id].Finished = true
+		for _, reduceTask := range c.ReduceTasks {
+			if !reduceTask.Finished {
+				return nil
+			}
+		}
+		c.ReduceTasksFinished = true
+	}
+	return nil
+}
+
 //
 // an example RPC handler.
 //
@@ -96,6 +129,8 @@ func (c *Coordinator) server() {
 // if the entire job has finished.
 //
 func (c *Coordinator) Done() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	return c.MapTasksFinished && c.ReduceTasksFinished
 }
 
