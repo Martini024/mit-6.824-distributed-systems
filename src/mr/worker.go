@@ -60,10 +60,14 @@ func writeIntermediateFiles(kva []KeyValue, nMap int, nReduce int) {
 	for i, region := range regions {
 		oname := fmt.Sprint("mr-", nMap, "-", i)
 		jsonRegion, _ := json.Marshal(region)
-		err := ioutil.WriteFile(oname, jsonRegion, 0644)
+		tmpFile, err := ioutil.TempFile(".", ".")
+		defer os.Remove(tmpFile.Name())
 		if err != nil {
 			fmt.Println(err)
 		}
+		tmpFile.Write(jsonRegion)
+		tmpFile.Close()
+		os.Rename(tmpFile.Name(), oname)
 	}
 }
 
@@ -90,7 +94,11 @@ func writeOutputToFiles(kva []KeyValue, reducef func(string, []string) string, n
 	sort.Sort(ByKey(kva))
 
 	oname := fmt.Sprint("mr-out-", nReduce)
-	ofile, _ := os.Create(oname)
+	tmpFile, err := ioutil.TempFile(".", ".")
+	defer os.Remove(tmpFile.Name())
+	if err != nil {
+		fmt.Println(err)
+	}
 
 	i := 0
 	for i < len(kva) {
@@ -104,12 +112,13 @@ func writeOutputToFiles(kva []KeyValue, reducef func(string, []string) string, n
 		}
 		count := reducef(kva[i].Key, values)
 
-		fmt.Fprintf(ofile, "%v %v\n", kva[i].Key, count)
+		tmpFile.WriteString(fmt.Sprintf("%v %v\n", kva[i].Key, count))
 
 		i = j
 	}
 
-	ofile.Close()
+	tmpFile.Close()
+	os.Rename(tmpFile.Name(), oname)
 }
 
 //
@@ -151,7 +160,7 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 			os.Exit(1)
 			break
 		}
-		time.Sleep(100 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
 	// uncomment to send the Example RPC to the coordinator.
 	// CallExample()
