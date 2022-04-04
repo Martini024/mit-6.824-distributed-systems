@@ -148,7 +148,7 @@ func Worker(mapf func(string, string) []KeyValue, reducef func(string, []string)
 			// }
 		} else {
 			// 3. No task assigned, terminate
-			println("Terminate because master replies error")
+			os.Exit(1)
 			break
 		}
 		time.Sleep(100 * time.Millisecond)
@@ -197,7 +197,7 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 	sockname := coordinatorSock()
 	c, err := rpc.DialHTTP("unix", sockname)
 	if err != nil {
-		log.Fatal("dialing:", err)
+		return false
 	}
 	defer c.Close()
 

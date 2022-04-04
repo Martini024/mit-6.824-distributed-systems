@@ -8,6 +8,7 @@ import (
 	"net/rpc"
 	"os"
 	"sync"
+	"time"
 )
 
 type Coordinator struct {
@@ -47,6 +48,14 @@ func (c *Coordinator) RequestForTaskHandler(args *struct{}, reply *RequestForTas
 				reply.Files = []string{mapTask.File}
 				reply.Region = c.Region
 				c.MapTasks[i].Assigned = true
+				go func(i int) {
+					time.Sleep(10 * time.Second)
+					c.mu.Lock()
+					defer c.mu.Unlock()
+					if !c.MapTasks[i].Finished {
+						c.MapTasks[i].Assigned = false
+					}
+				}(i)
 				return nil
 			}
 		}
@@ -59,6 +68,14 @@ func (c *Coordinator) RequestForTaskHandler(args *struct{}, reply *RequestForTas
 				reply.Type = TaskType(Reduce)
 				reply.Files = reduceTask.Files
 				c.ReduceTasks[i].Assigned = true
+				go func(i int) {
+					time.Sleep(10 * time.Second)
+					c.mu.Lock()
+					defer c.mu.Unlock()
+					if !c.ReduceTasks[i].Finished {
+						c.ReduceTasks[i].Assigned = false
+					}
+				}(i)
 				return nil
 			}
 		}
